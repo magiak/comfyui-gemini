@@ -82,7 +82,7 @@ class GeminiImageDirect:
                 "prompt": ("STRING", {"multiline": True, "default": ""}),
                 "model": (list(SUPPORTED_MODELS), {"default": "gemini-3-pro-image-preview"}),
                 "aspect_ratio": (list(SUPPORTED_ASPECTS), {"default": "16:9"}),
-                "seed": ("INT", {"default": 42, "min": 0, "max": 0xFFFFFFFFFFFFFFFF, "control_after_generate": True}),
+                "seed": ("INT", {"default": 42, "min": 0, "max": 0x7FFFFFFF, "control_after_generate": True}),
             },
             "optional": {
                 "image": ("IMAGE", {}),
@@ -115,7 +115,7 @@ class GeminiImageDirect:
         config = types.GenerateContentConfig(
             response_modalities=["IMAGE"],
             image_config=types.ImageConfig(aspect_ratio=aspect_ratio),
-            seed=seed,
+            seed=int(seed) & 0x7FFFFFFF,
         )
 
         response = client.models.generate_content(
