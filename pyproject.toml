@@ -1,0 +1,17 @@
+[project]
+name = "comfyui-gemini"
+description = "ComfyUI custom node calling Google Gemini Image API directly via GEMINI_API_KEY (no ComfyUI Org gateway)."
+version = "0.1.0"
+license = { text = "MIT" }
+dependencies = [
+    "google-genai>=1.0.0",
+    "pillow>=10.0.0",
+]
+
+[project.urls]
+Repository = "https://github.com/magiak/comfyui-gemini"
+
+[tool.comfy]
+PublisherId = "magiak"
+DisplayName = "Gemini Image (Direct API)"
+Icon = ""
