@@ -1,9 +1,22 @@
 """ComfyUI custom node: GeminiImageDirect.
 
-Calls Google Gemini Image (Nano Banana / Gemini 3 Pro Image) DIRECTLY using a
-GEMINI_API_KEY environment variable on the ComfyUI server. Bypasses ComfyUI's
-official Gemini nodes, which route through the Comfy.org commercial API
-gateway (markup + login required).
+Calls Google Gemini Image (Nano Banana / Gemini 3 Pro Image) DIRECTLY,
+bypassing ComfyUI's official Gemini nodes (which route through the Comfy.org
+commercial API gateway with a markup + login).
+
+Two backends, auto-selected from environment:
+
+1. Vertex AI (recommended for production / GDPR / higher quotas)
+   - Set GCP_PROJECT_ID  (required)  e.g. "designeo-marketing-ai"
+   - Set GCP_LOCATION    (optional)  e.g. "europe-west4" (default "us-central1")
+   - Set GOOGLE_APPLICATION_CREDENTIALS to a service account JSON path
+     (or use ADC via `gcloud auth application-default login`).
+   - Service account needs IAM role: roles/aiplatform.user.
+
+2. AI Studio (simple Gemini Developer API key)
+   - Set GEMINI_API_KEY (or GOOGLE_API_KEY) — get one from
+     https://aistudio.google.com/apikey
+   - Used as fallback when GCP_PROJECT_ID is not set.
 
 Inputs:
   prompt       (STRING, multiline)  Edit / generation prompt.
@@ -11,20 +24,18 @@ Inputs:
                                      gemini-3-1-flash-image-preview |
                                      gemini-2.5-flash-image
   aspect_ratio (COMBO)               16:9, 9:16, 1:1, ...
-  seed         (INT)                 Best-effort determinism (Gemini honors loosely).
+  seed         (INT)                 Best-effort determinism.
   image        (IMAGE, optional)     Reference / canvas image to edit.
 
 Output:
   IMAGE  - generated image as ComfyUI tensor.
-  STRING - any text the model returned alongside the image (usually empty).
+  STRING - any text the model returned alongside the image.
 
 Setup on the ComfyUI server (one-time):
-  1. Install via ComfyUI Manager > Install via Git URL: <repo URL>
-  2. Set environment variable GEMINI_API_KEY (docker-compose / systemd / shell).
-  3. Restart ComfyUI.
-
-The Gemini API key is read at call time from os.environ["GEMINI_API_KEY"]
-(falls back to GOOGLE_API_KEY).
+  1. Install via ComfyUI Manager > Install via Git URL.
+  2. Set the environment variables above.
+  3. Restart ComfyUI (docker-compose up -d to re-create the container —
+     plain `restart` does NOT pick up new env vars).
 """
 from __future__ import annotations
 
@@ -74,6 +85,28 @@ def _pil_to_tensor(pil: Image.Image) -> torch.Tensor:
     return torch.from_numpy(arr).unsqueeze(0)
 
 
+def _make_client():
+    """Build a genai.Client based on env vars.
+
+    Vertex AI mode if GCP_PROJECT_ID is set; otherwise AI Studio with API key.
+    """
+    from google import genai
+
+    project_id = os.environ.get("GCP_PROJECT_ID")
+    if project_id:
+        location = os.environ.get("GCP_LOCATION", "us-central1")
+        return genai.Client(vertexai=True, project=project_id, location=location), f"vertex({project_id}/{location})"
+
+    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "No Gemini auth configured on the ComfyUI server. "
+            "Set GCP_PROJECT_ID (+ GOOGLE_APPLICATION_CREDENTIALS) for Vertex AI, "
+            "or GEMINI_API_KEY for AI Studio. See node docstring."
+        )
+    return genai.Client(api_key=api_key), "ai_studio"
+
+
 class GeminiImageDirect:
     @classmethod
     def INPUT_TYPES(cls):
@@ -95,17 +128,9 @@ class GeminiImageDirect:
     CATEGORY = "Gemini"
 
     def generate(self, prompt: str, model: str, aspect_ratio: str, seed: int, image=None):
-        from google import genai
         from google.genai import types
 
-        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-        if not api_key:
-            raise RuntimeError(
-                "GEMINI_API_KEY env var not set on the ComfyUI server. "
-                "Set it in your ComfyUI startup (docker-compose / systemd / shell)."
-            )
-
-        client = genai.Client(api_key=api_key)
+        client, backend = _make_client()
 
         contents = [prompt]
         if image is not None:
@@ -125,7 +150,7 @@ class GeminiImageDirect:
         )
 
         if not response.candidates:
-            raise RuntimeError(f"Gemini returned no candidates: {response}")
+            raise RuntimeError(f"[{backend}] Gemini returned no candidates: {response}")
 
         parts = response.candidates[0].content.parts or []
         texts = []
@@ -139,7 +164,7 @@ class GeminiImageDirect:
                 texts.append(text)
 
         joined = " | ".join(texts) or "<no image, no text>"
-        raise RuntimeError(f"Gemini returned no image. Model said: {joined}")
+        raise RuntimeError(f"[{backend}] Gemini returned no image. Model said: {joined}")
 
 
 NODE_CLASS_MAPPINGS = {"GeminiImageDirect": GeminiImageDirect}
