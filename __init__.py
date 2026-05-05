@@ -41,6 +41,34 @@ from __future__ import annotations
 
 import io
 import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+def _ensure_deps() -> None:
+    """Auto-install requirements.txt deps if missing.
+
+    Survives docker-compose container recreate (which wipes site-packages
+    even though pip_cache is mounted). Runs once at module import.
+    """
+    try:
+        import google.genai  # noqa: F401
+        return
+    except ImportError:
+        pass
+    req = Path(__file__).parent / "requirements.txt"
+    print(f"[comfyui-gemini] google-genai missing, installing {req}...", flush=True)
+    subprocess.check_call(
+        [sys.executable, "-m", "pip", "install", "-r", str(req)],
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+    )
+    print("[comfyui-gemini] install complete.", flush=True)
+
+
+_ensure_deps()
+
 
 import numpy as np
 import torch
